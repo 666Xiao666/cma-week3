@@ -3,17 +3,13 @@ title: "Week3_solution"
 author: "Xiao Cui"
 date: "2024-04-02"
 output: html_document
----
----
-title: "GEO_880_week2"
-author: "Xiao Cui"
-date: "2024-04-26"
-output: html_document
+warning: false
+message: false
 ---
 
 ## Exercise A
 ### Task 1: Import data
-```{r, load data}
+```{r library and load data}
 # always work within a rproject
 library(readr)
 library(dplyr)
@@ -32,13 +28,13 @@ wildschwein_BE_df <- read_csv("wildschwein_BE_2056.csv",
 
 wildschwein_BE_df %>% as_tibble()
 ```
-
-```{r pressure, echo=FALSE}
+Now we have a look on the point patterns.
+```{r plot points}
 ggplot(wildschwein_BE_df, aes(E, N, colour = TierID)) + geom_point()
 ```
 
 
-```{r, create sf}
+```{r convert coordinators to sf}
 library("sf")
 wildschwein_BE_sf <- st_as_sf(wildschwein_BE_df,
     coords = c("E", "N"),
@@ -47,7 +43,7 @@ wildschwein_BE_sf <- st_as_sf(wildschwein_BE_df,
 plot(wildschwein_BE_sf)
 ```
 ### Task 2: Get an overview
-```{r}
+```{r add time lag in df}
 # define difftime function
 difftime_secs <- function(later, now){
     as.numeric(difftime(later, now, units = "secs"))
@@ -60,14 +56,14 @@ wildschwein_BE_df <- mutate(wildschwein_BE_df, timelag = difftime_secs(lead(Date
 wildschwein_BE_df
 ```
 Q: How many individuals were tracked?
-```{r, task 2 question 1}
+```{r task 2 question 1}
 count_individual = nrow(wildschwein_BE_df)
 count_individual
 ```
 A: There are 51246 individuals tracked.
 
 Q2: For how long were the individual tracked? Are there gaps?
-```{r, task 2 question 2}
+```{r task 2 question 2-1}
 # Calculate total duration of tracking and gaps within each group
 tracking_summary <- summarise(wildschwein_BE_df, 
                               total_duration = difftime(max(DatetimeUTC), min(DatetimeUTC), units = "secs"))
@@ -75,7 +71,7 @@ tracking_summary <- summarise(wildschwein_BE_df,
 tracking_summary
 ```
 
-```{r question2part2}
+```{r task 2 question 2-2}
 library(ggplot2)
 
 # Extract time component from DatetimeUTC
@@ -97,29 +93,30 @@ A:
 018A	22607072 secs
 
 Q: Were all individuals tracked concurrently or sequentially?
-```{r, task 2 question 3}
+```{r task 2 question 3}
 # Check if individuals within each group were tracked concurrently or sequentially
 concurrent_tracking <- summarise(wildschwein_BE_df, 
                                   tracked_concurrently = length(unique(DatetimeUTC)) == n(),
                                   n = n())
-
+# show tracking time for each group
 concurrent_tracking
 ```
 
 A: 
 Q: What is the temporal sampling interval between the locations?
-```{r, task 2 question 4}
+```{r task 2 question 4}
 # Calculate temporal sampling interval within each group
 sampling_interval <- summarise(wildschwein_BE_df, 
                                sampling_interval = median(timelag, na.rm = TRUE))
 
+# show temporal sampling
 sampling_interval
 ```
 
 A: The sampling interval here is around 900 second.
 
 ### Task 3: Get an overview
-```{r, task 3}
+```{r task 3}
 # Function to calculate step length between consecutive points
 calculate_step_length <- function(geom) {
   later <- lag(geom)
@@ -143,8 +140,9 @@ calculate_step_length <- function(geom) {
 wildschwein_BE_sf$steplength <- calculate_step_length(wildschwein_BE_sf$geometry)
 wildschwein_BE_sf |> as_tibble()
 ```
-The code above is an improvement from below:
 
+The code above is an improvement from below:
+```{r (not run) backup 1.1, eval = FALSE}
 later <- lag(wildschwein_BE_sf$geometry)
 now <- wildschwein_BE_sf$geometry
 
@@ -160,73 +158,16 @@ step_lengths <- distance_by_element(later, now)
 
 # Add step lengths as a new column to the dataframe
 wildschwein_BE_sf$steplength <- step_lengths
+```
 
+The initial version of this function:
+```{r (not run) backup 1.0, eval = FALSE}
 # code above is an improvement from:
-# wildschwein_BE_sf <- mutate(wildschwein_BE_sf, steplength = distance_by_element(later, now))
-# The reason is: Error: C stack usage  15922896 is too close to the limit
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+wildschwein_BE_sf <- mutate(wildschwein_BE_sf, steplength = distance_by_element(later, now))
+```
+The reason is: Error: C stack usage  15922896 is too close to the limit.
 
 
 ## Exercise B
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 ## Exercise C
