@@ -4,27 +4,229 @@ author: "Xiao Cui"
 date: "2024-04-02"
 output: html_document
 ---
+---
+title: "GEO_880_week2"
+author: "Xiao Cui"
+date: "2024-04-26"
+output: html_document
+---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+## Exercise A
+### Task 1: Import data
+```{r, load data}
+# always work within a rproject
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(sf)
+library(xfun)
+wildschwein_BE_df <- read_csv("wildschwein_BE_2056.csv",
+                 col_types = cols(
+                   TierID = col_character(),
+                   TierName = col_character(),
+                   CollarID = col_integer(),
+                   DatetimeUTC = col_datetime(format = "%Y-%m-%dT%H:%M:%SZ"),
+                   Lat = col_double(),
+                   Long = col_double()
+                 ))
+
+wildschwein_BE_df %>% as_tibble()
 ```
-
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-
-```
-
-## Including Plots
-
-You can also embed plots, for example:
 
 ```{r pressure, echo=FALSE}
-
+ggplot(wildschwein_BE_df, aes(E, N, colour = TierID)) + geom_point()
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r, create sf}
+library("sf")
+wildschwein_BE_sf <- st_as_sf(wildschwein_BE_df,
+    coords = c("E", "N"),
+    crs = 4326
+)
+plot(wildschwein_BE_sf)
+```
+### Task 2: Get an overview
+```{r}
+# define difftime function
+difftime_secs <- function(later, now){
+    as.numeric(difftime(later, now, units = "secs"))
+}
+
+# identify time lag within group (objects)
+wildschwein_BE_df <- group_by(wildschwein_BE_df, TierID)
+wildschwein_BE_df <- mutate(wildschwein_BE_df, timelag = difftime_secs(lead(DatetimeUTC), DatetimeUTC))
+
+wildschwein_BE_df
+```
+Q: How many individuals were tracked?
+```{r, task 2 question 1}
+count_individual = nrow(wildschwein_BE_df)
+count_individual
+```
+A: There are 51246 individuals tracked.
+
+Q2: For how long were the individual tracked? Are there gaps?
+```{r, task 2 question 2}
+# Calculate total duration of tracking and gaps within each group
+tracking_summary <- summarise(wildschwein_BE_df, 
+                              total_duration = difftime(max(DatetimeUTC), min(DatetimeUTC), units = "secs"))
+
+tracking_summary
+```
+
+```{r question2part2}
+library(ggplot2)
+
+# Extract time component from DatetimeUTC
+wildschwein_BE_df$Time <- format(wildschwein_BE_df$DatetimeUTC, format = "%H:%M:%S")
+
+# plot time distribution of individual tracking
+ggplot(wildschwein_BE_df, aes(x = as.Date(DatetimeUTC), y = as.POSIXct(Time, format = "%H:%M:%S"), color = TierID)) +
+  geom_point(alpha = 0.1) +
+  labs(title = "Tracking Duration Over Time by TierID",
+       x = "Date",
+       y = "Time",
+       color = "TierID") +
+  theme_minimal()
+```
+
+A:
+002A	29253602 secs			
+016A	20275167 secs			
+018A	22607072 secs
+
+Q: Were all individuals tracked concurrently or sequentially?
+```{r, task 2 question 3}
+# Check if individuals within each group were tracked concurrently or sequentially
+concurrent_tracking <- summarise(wildschwein_BE_df, 
+                                  tracked_concurrently = length(unique(DatetimeUTC)) == n(),
+                                  n = n())
+
+concurrent_tracking
+```
+
+A: 
+Q: What is the temporal sampling interval between the locations?
+```{r, task 2 question 4}
+# Calculate temporal sampling interval within each group
+sampling_interval <- summarise(wildschwein_BE_df, 
+                               sampling_interval = median(timelag, na.rm = TRUE))
+
+sampling_interval
+```
+
+A: The sampling interval here is around 900 second.
+
+### Task 3: Get an overview
+```{r, task 3}
+# Function to calculate step length between consecutive points
+calculate_step_length <- function(geom) {
+  later <- lag(geom)
+  now <- geom
+  
+  # Function to calculate distance by time lag
+  distance_by_element <- function(later, now) {
+    as.numeric(
+      st_distance(later, now, by_element = TRUE)
+    )
+  }
+  
+  # Calculate step length for each pair of consecutive points
+  step_lengths <- distance_by_element(later, now)
+  
+  return(step_lengths)
+}
+
+# Example usage:
+# Add step lengths as a new column to the sf object
+wildschwein_BE_sf$steplength <- calculate_step_length(wildschwein_BE_sf$geometry)
+wildschwein_BE_sf |> as_tibble()
+```
+The code above is an improvement from below:
+
+later <- lag(wildschwein_BE_sf$geometry)
+now <- wildschwein_BE_sf$geometry
+
+# calculate the distance by time lag
+distance_by_element <- function(later, now){
+  as.numeric(
+    st_distance(later, now, by_element = TRUE)
+  )
+}
+
+# Calculate step length for each pair of consecutive points
+step_lengths <- distance_by_element(later, now)
+
+# Add step lengths as a new column to the dataframe
+wildschwein_BE_sf$steplength <- step_lengths
+
+# code above is an improvement from:
+# wildschwein_BE_sf <- mutate(wildschwein_BE_sf, steplength = distance_by_element(later, now))
+# The reason is: Error: C stack usage  15922896 is too close to the limit
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Exercise B
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Exercise C
