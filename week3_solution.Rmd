@@ -1,21 +1,27 @@
 ---
-title: "Week3_solution"
+title: "Week2&3_solution"
 author: "Xiao Cui"
 date: "2024-04-02"
 output: html_document
-warning: false
-message: false
 ---
 
 ## Exercise A
 ### Task 1: Import data
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
 ```{r library and load data}
 # always work within a rproject
 library(readr)
+library(data.table)
 library(dplyr)
 library(ggplot2)
 library(sf)
 library(xfun)
+library(tmap)
+library(tidyr)
+library(mapview)
 wildschwein_BE_df <- read_csv("wildschwein_BE_2056.csv",
                  col_types = cols(
                    TierID = col_character(),
@@ -38,7 +44,7 @@ ggplot(wildschwein_BE_df, aes(E, N, colour = TierID)) + geom_point()
 library("sf")
 wildschwein_BE_sf <- st_as_sf(wildschwein_BE_df,
     coords = c("E", "N"),
-    crs = 4326
+    crs = 2056
 )
 plot(wildschwein_BE_sf)
 ```
@@ -50,35 +56,41 @@ difftime_secs <- function(later, now){
 }
 
 # identify time lag within group (objects)
-wildschwein_BE_df <- group_by(wildschwein_BE_df, TierID)
-wildschwein_BE_df <- mutate(wildschwein_BE_df, timelag = difftime_secs(lead(DatetimeUTC), DatetimeUTC))
+wildschwein_BE_sf <- group_by(wildschwein_BE_sf, TierID)
+wildschwein_BE_sf <- mutate(wildschwein_BE_sf, timelag = difftime_secs(lead(DatetimeUTC), DatetimeUTC))
 
-wildschwein_BE_df
+wildschwein_BE_sf
 ```
 Q: How many individuals were tracked?
 ```{r task 2 question 1}
-count_individual = nrow(wildschwein_BE_df)
-count_individual
+## individuals by type
+name_ind <- unique(wildschwein_BE_sf$TierName)
+numb_ind <- length(name_ind)
+
+# Print (refer to codes from Tanja)
+cat(crayon::bold("How many individuals were tracked?"), "\n")
+cat("Number tracked individuals:", numb_ind, "\n")
+cat("Tracked individuals:", name_ind, "\n")
+
 ```
 A: There are 51246 individuals tracked.
 
 Q2: For how long were the individual tracked? Are there gaps?
 ```{r task 2 question 2-1}
 # Calculate total duration of tracking and gaps within each group
-tracking_summary <- summarise(wildschwein_BE_df, 
+tracking_summary <- summarise(wildschwein_BE_sf, 
                               total_duration = difftime(max(DatetimeUTC), min(DatetimeUTC), units = "secs"))
 
 tracking_summary
 ```
 
 ```{r task 2 question 2-2}
-library(ggplot2)
-
 # Extract time component from DatetimeUTC
-wildschwein_BE_df$Time <- format(wildschwein_BE_df$DatetimeUTC, format = "%H:%M:%S")
+wildschwein_BE_sf$Time <- format(wildschwein_BE_sf$DatetimeUTC, format = "%H:%M:%S")
+wildschwein_BE_sf$hour <- hour(wildschwein_BE_sf$DatetimeUTC)
 
 # plot time distribution of individual tracking
-ggplot(wildschwein_BE_df, aes(x = as.Date(DatetimeUTC), y = as.POSIXct(Time, format = "%H:%M:%S"), color = TierID)) +
+ggplot(wildschwein_BE_sf, aes(x = as.Date(DatetimeUTC), y = hour, color = TierID)) +
   geom_point(alpha = 0.1) +
   labs(title = "Tracking Duration Over Time by TierID",
        x = "Date",
@@ -94,19 +106,19 @@ A:
 
 Q: Were all individuals tracked concurrently or sequentially?
 ```{r task 2 question 3}
-# Check if individuals within each group were tracked concurrently or sequentially
-concurrent_tracking <- summarise(wildschwein_BE_df, 
+# Check if individuals within each group were tracked with the count of unique timestamp
+concurrent_tracking <- summarise(wildschwein_BE_sf, 
                                   tracked_concurrently = length(unique(DatetimeUTC)) == n(),
                                   n = n())
 # show tracking time for each group
 concurrent_tracking
 ```
+A: Here we can find 016A and 018A have the similar total timestamp count. 002A has more timestamps than them, which means they were tracked sequentially. We can also refer to the time plot at the last part, i.e., there are obvious different patterns in time among each individual.
 
-A: 
 Q: What is the temporal sampling interval between the locations?
 ```{r task 2 question 4}
 # Calculate temporal sampling interval within each group
-sampling_interval <- summarise(wildschwein_BE_df, 
+sampling_interval <- summarise(wildschwein_BE_sf, 
                                sampling_interval = median(timelag, na.rm = TRUE))
 
 # show temporal sampling
@@ -167,7 +179,241 @@ wildschwein_BE_sf <- mutate(wildschwein_BE_sf, steplength = distance_by_element(
 ```
 The reason is: Error: C stack usage  15922896 is too close to the limit.
 
+### Task 4: Deriving distance and speed
+```{r speed calculation}
+# Calculate animals' speed based on steplength and timelag
+# v = s/t
+wildschwein_BE_sf$speed <- wildschwein_BE_sf$steplength / wildschwein_BE_sf$timelag
+
+wildschwein_BE_sf |> as_tibble()
+```
+
+
+```{r sample and mapping}
+# take a sample from "Sabi"
+wildschwein_sample <- wildschwein_BE_sf |>
+  filter(TierName == "Sabi") |> 
+  head(100)
+
+# create a map for our sample
+tmap_mode("view")
+tm_shape(wildschwein_sample) + 
+  tm_dots()
+```
+
+```{r osm mapping}
+# key parameter here: summarise(do_union = FALSE)
+# connect points by order
+wildschwein_sample_line <- wildschwein_sample |> 
+  # dissolve to a MULTIPOINT:
+  summarise(do_union = FALSE) |> 
+  st_cast("LINESTRING")
+
+tmap_options(basemaps = "OpenStreetMap")
+
+tm_shape(wildschwein_sample_line) +
+  tm_lines() +
+  tm_shape(wildschwein_sample) + 
+  tm_dots()
+```
 
 ## Exercise B
+```{r preparation}
+# reload functions: calculate distance via time lag
+difftime_secs <- function(x, y){
+  as.numeric(difftime(x, y, units = "secs"))
+}
+
+distance_by_element <- function(later, now){
+  as.numeric(
+    st_distance(later, now, by_element = TRUE)
+  )
+}
+
+calculate_movement_metrics <- function(df, datetime_col, n, timelag_col = "timelag", steplength_col = "steplength", speed_col = "speed") {
+  now <- df[[datetime_col]]
+  later <- now + 120*n # a sampling window of 120 seconds
+  
+  df[[timelag_col]] <- difftime(later, now, units = "secs")
+  
+  now_geo <- df$geometry
+  later_geo <- lag(now_geo, n = n*2)
+  
+  df[[steplength_col]] <- distance_by_element(later_geo, now_geo)
+  
+  # Convert timelag to numeric
+  df[[timelag_col]] <- as.numeric(df[[timelag_col]])
+  
+  df[[speed_col]] <- df[[steplength_col]] / df[[timelag_col]]
+  
+  return(df)
+}
+```
+Then we import cow data.
+```{r load cow data}
+# import data
+cow_df <- read_csv("caro60.csv",
+                 col_types = cols(
+                   TierID = col_character(),
+                   TierName = col_character(),
+                   CollarID = col_integer(),
+                   DatetimeUTC = col_datetime(format = "%Y-%m-%dT%H:%M:%SZ"),
+                   E = col_double(),
+                   N = col_double()
+                 ))
+# convert dataframe to sf
+cow_sf <- st_as_sf(cow_df, coords = c("E", "N"), crs = 2056)
+# show sf breifly
+cow_sf %>% as_tibble()
+# keep time for calculation
+caro <- cow_sf |> 
+  select(DatetimeUTC)
+# show caro briefly
+caro %>% as_tibble()
+```
+### Task 1: Calculate speed at scale 1
+```{r}
+caro <- calculate_movement_metrics(caro, datetime_col = "DatetimeUTC", n = 1, timelag_col = "timelag1", steplength_col = "steplength1", speed_col = "speed1")
+
+caro |> as_tibble()
+```
+### Task 2: Calculate speed at scale 2
+```{r}
+caro <- calculate_movement_metrics(caro, datetime_col = "DatetimeUTC", n = 2, timelag_col = "timelag2", steplength_col = "steplength2", speed_col = "speed2")
+
+caro |> 
+  # drop geometry and select only specific columns
+  # to display relevant data only
+  st_drop_geometry() |> 
+  select(timelag2, steplength2, speed2) |> 
+  head()
+```
+
+### Task 3: Calculate speed at scale 3
+```{r}
+caro <- calculate_movement_metrics(caro, datetime_col = "DatetimeUTC", n = 4, timelag_col = "timelag3", steplength_col = "steplength3", speed_col = "speed3")
+
+caro |> 
+  st_drop_geometry() |> 
+  select(timelag3, steplength3, speed3) |> 
+  head()
+```
+### Task 4: Compare speed across scales
+```{r}
+caro |> 
+  st_drop_geometry() |> 
+  select(DatetimeUTC, speed1, speed2, speed3)
+```
+### Task 5:
+```{r plot speed 1}
+ggplot(caro, aes(y = speed1)) + 
+    # we remove outliers to increase legibility, analogue
+  # Laube and Purves (2011)
+  geom_boxplot(outliers = FALSE)
+```
+```{r compare speeds table}
+# before pivoting, let's simplify our data.frame
+caro2 <- caro |> 
+  st_drop_geometry() |> 
+  select(DatetimeUTC, speed1, speed2, speed3)
+
+caro_long <- caro2 |> 
+  pivot_longer(c(speed1, speed2, speed3))
+  
+head(caro_long)
+
+ggplot(caro_long, aes(name, value)) +
+  # we remove outliers to increase legibility, analogue
+  # Laube and Purves (2011)
+  geom_boxplot(outliers = FALSE)
+```
+
 
 ## Exercise C
+We export our trajectory from posmo and import data here.
+```{r import posmo data}
+posmo_df <- read_csv("posmo_03_23_05_03.csv",
+                 col_types = cols(
+                   user_id = col_character(),
+                   datetime = col_datetime(),
+                   weekday = col_factor(levels = c("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")), # read daytime as a factor
+                   place_name = col_character(),
+                   transport_mode = col_character(),
+                   lon_x = col_double(),
+                   lat_y = col_double()
+                 ))
+
+posmo_df %>% as_tibble()
+```
+```{r posmo sf}
+# Convert to sf
+posmo_sf <- st_as_sf(posmo_df, coords = c("lon_x", "lat_y"), crs = 4326)
+# Convert CRS to CH1903 / LV95 (EPSG:2056)
+posmo_sf <- st_transform(posmo_sf, crs = 2056)
+```
+There are too many point data in posmo_sf. Thus, we will use sample to have a look at our data. We take trajectory on April 21 as a sample here.
+Wrap up: we need the package data.table. It converts S3: POSIXct into string. I am flexible if there is a potential better method for filtering date. Examples are shown below, also see: https://cran.r-project.org/web/packages/data.table/vignettes/datatable-intro.html
+https://stackoverflow.com/questions/9839343/extracting-time-from-posixct
+```{r (not run) backup time format, eval = FALSE}
+library(data.table)
+x <- "2012-03-07 03:06:49 CET"
+as.IDate(x) # Output is "2012-03-07"
+hour(x): extract hour from timestamp
+```
+
+```{r mapping dots by time}
+# take a sample from "2024-04-03"
+posmo_0304_sf <- posmo_sf |>
+  filter(as.IDate(datetime) == "2024-04-03")
+
+# a function for assigning colors
+assign_color <- function(x) {
+  # Extract hour from datetime column
+  hour <- data.table::hour(x$datetime)
+  
+  # Assign colors based on hour ranges
+  color <- case_when(
+    hour >= 6 & hour < 12 ~ "orange",
+    hour >= 12 & hour < 18 ~ "blue",
+    TRUE ~ NA_character_
+  )
+  
+  # Create a summary data frame with colors
+  color_summary <- data.frame(geometry = x, color = color)
+  
+  # Convert to sf object
+  color_sf <- st_sf(color_summary, crs = st_crs(x))
+  
+  return(color_sf)
+}
+
+# Create colored sf object
+posmo_0304_sf_color <- assign_color(posmo_0304_sf)
+
+# repeated steps in Exercise A
+# Create the map with colored point data by time
+tmap_mode("view")
+tm_shape(posmo_0304_sf_color) + 
+  tm_dots(col = "color")
+
+# key parameter here: summarise(do_union = FALSE)
+# connect points by order
+posmo_0304_line <- posmo_0304_sf |> 
+  # dissolve to a MULTIPOINT:
+  summarise(do_union = FALSE) |> 
+  st_cast("LINESTRING")
+
+# use tmap for visualizing our trajectory
+tmap_options(basemaps = "OpenStreetMap")
+
+tm_shape(posmo_0304_line) +
+  tm_lines() +
+  tm_shape(posmo_0304_sf) + 
+  tm_dots()
+```
+
+
+
+
+
+
